@@ -5,6 +5,15 @@ on:
     tags:
       - 'v*' # Trigger on tag push matching v*, i.e. v1.0, v20.15.10
   workflow_dispatch: # Allow manual trigger
+    inputs:
+      custom_tag:
+        description: 'Custom tag name (optional, defaults to current time like v2026.05.25-120000)'
+        required: false
+        type: string
+      release_notes:
+        description: 'Additional release notes (optional)'
+        required: false
+        type: string
 
 jobs:
   build-and-release:
@@ -31,9 +40,40 @@ jobs:
       - name: Gradle build
         run: ./gradlew build
 
+      - name: Prepare Release Info
+        id: prep
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            TAG="${{ inputs.custom_tag }}"
+            if [ -z "$TAG" ]; then
+              TAG="v$(date +'%Y.%m.%d-%H%M%S')"
+            fi
+            echo "tag=$TAG" >> $GITHUB_OUTPUT
+            echo "name=Release $TAG" >> $GITHUB_OUTPUT
+            
+            EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+            echo "body<<$EOF" >> $GITHUB_OUTPUT
+            echo "### 🚀 Manual Build Triggered" >> $GITHUB_OUTPUT
+            echo "- **Commit:** \`${{ github.sha }}\`" >> $GITHUB_OUTPUT
+            echo "- **Triggered by:** @${{ github.actor }}" >> $GITHUB_OUTPUT
+            if [ -n "${{ inputs.release_notes }}" ]; then
+              echo "" >> $GITHUB_OUTPUT
+              echo "### 📝 Additional Notes" >> $GITHUB_OUTPUT
+              echo "${{ inputs.release_notes }}" >> $GITHUB_OUTPUT
+            fi
+            echo "$EOF" >> $GITHUB_OUTPUT
+          else
+            echo "tag=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+            echo "name=Release ${{ github.ref_name }}" >> $GITHUB_OUTPUT
+            echo "body=### 🚀 Automated Release for \`${{ github.ref_name }}\`" >> $GITHUB_OUTPUT
+          fi
+
       - name: Create Release and Upload Artifacts
         uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
         with:
+          tag_name: ${{ steps.prep.outputs.tag }}
+          name: ${{ steps.prep.outputs.name }}
+          body: ${{ steps.prep.outputs.body }}
+          target_commitish: ${{ github.sha }}
           files: build/libs/*.jar
           generate_release_notes: true
